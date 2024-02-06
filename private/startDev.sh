@@ -20,12 +20,12 @@ echo "Cleaning up previous data"
 docker rm -f besu-node-0 besu-node-1 besu-node-2 besu-node-3 
 
 # Clean up data dir from each node
-rm -rf node/besu-0/data
-rm -rf node/besu-1/data
-rm -rf node/besu-2/data
-rm -rf node/besu-3/data
+sudo rm -rf node/besu-3/data
+sudo rm -rf node/besu-0/data
+sudo rm -rf node/besu-1/data
+sudo rm -rf node/besu-2/data
 
-rm -rf genesis
+sudo rm -rf genesis
 
 rm -rf _tmp
 
@@ -66,9 +66,9 @@ echo "Starting bootnode"
 docker-compose -f docker/docker-compose-bootnode.yaml up -d
 
 # Retrieve bootnode enode address
-max_retries=30  # Maximum number of retries
-retry_delay=1  # Delay in seconds between retries
-retry_count=0  # Initialize the retry count
+max_retries=150 # Maximum number of retries
+retry_delay=1   # Delay in seconds between retries
+retry_count=0   # Initialize the retry count
 
 while [ $retry_count -lt $max_retries ]; do
   export ENODE=$(curl -X POST --data '{"jsonrpc":"2.0","method":"net_enode","params":[],"id":1}' http://127.0.0.1:8545 | jq -r '.result')
@@ -120,3 +120,4 @@ sleep 5
 echo "Deploying contract..."
 
 truffle migrate --f 1 --to 1 --network development
+# Nota: O truffle está sendo descontinuado, então é bom mudar para um Hardhat ou algo do tipo no futuro

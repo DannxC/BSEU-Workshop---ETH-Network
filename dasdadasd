@@ -1,0 +1,41 @@
+[33mcommit f8a3d9794704c34b15cff62d8ea7f8946628a6bf[m[33m ([m[1;36mHEAD -> [m[1;32mmain[m[33m)[m
+Author: Daniel Cavassani <daniel_cavassani@hotmail.com>
+Date:   Mon Feb 5 08:54:18 2024 -0300
+
+    Testing the repo and modifying a little. added sudo into the .sh for remove directories. Added 1 new contract to test. From here, everything working well with docker etc. From here, we are going to try to change a little some things, like substitute truffle with hardhat.
+
+[33mcommit a576dbd7d85b189d6ce9f4e2c26f14ca3fd0d9d4[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: Samuel Venzi <samuel.venzi@me.com>
+Date:   Wed Dec 13 15:17:37 2023 -0300
+
+    Update README.md
+
+[33mcommit 37f43fdb940a2da95e34601154d73435001da973[m
+Author: Samuel Venzi <samuel.venzi@me.com>
+Date:   Wed Dec 13 15:06:27 2023 -0300
+
+    Add prometheus monitoring
+
+[33mcommit f3f4c1c90fa3010d7200b680a09ae6b983648a0a[m
+Author: Samuel Venzi <samuel.venzi@me.com>
+Date:   Wed Dec 13 11:31:23 2023 -0300
+
+    Add public network example
+
+[33mcommit 06e2065575a3f362d254b5e3c444cc10f2951ba5[m
+Author: Samuel Venzi <samuel.venzi@me.com>
+Date:   Tue Dec 12 20:45:46 2023 -0300
+
+    Add private network example
+
+[33mcommit 8fa8760af915e8bcea55e9ff3efac3d22700a364[m
+Author: Samuel Venzi <samuel.venzi@me.com>
+Date:   Tue Dec 12 20:45:36 2023 -0300
+
+    Add dev README
+
+[33mcommit 01544e2d457f865e054158eac3aec56def0477dd[m
+Author: Samuel Venzi <samuel.venzi@me.com>
+Date:   Sun Dec 10 12:50:26 2023 -0300
+
+    Initial commit

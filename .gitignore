@@ -6,11 +6,15 @@ private/node/besu-2/data
 private/node/besu-3/data
 
 private/genesis
-
 private/contracts/node_modules
-
 private/contracts/build/contracts
-
 .DS_Store
-
 tmp
+
+private/node_modules/
+private/build/
+private/dist/
+private/coverage/
+private/.env
+
+private/truffle-config.js
