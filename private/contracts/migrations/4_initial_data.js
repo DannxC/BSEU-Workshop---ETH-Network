@@ -1,6 +1,6 @@
 // migrations/4_initial_data.js
 
-const DSS_Storage = artifacts.require("DSS_Storage");
+const DSS_Storage = artifacts.require("./DSS_Storage.sol");
 
 module.exports = function(deployer) {
   deployer.then(async () => {
@@ -38,7 +38,7 @@ module.exports = function(deployer) {
       url,
       entityNumber,
       id,
-      { from: deployer, gas: 5000000 }
+    //   { from: deployer, gas: 5000000 }
     );
 
     console.log("Migração 4_initial_data.js concluída com sucesso!");

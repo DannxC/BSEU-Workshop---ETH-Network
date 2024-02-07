@@ -15,13 +15,14 @@ module.exports = async function(callback) {
 
         // Chamada da função getData
         const result = await instance.getData(geohash, minHeight, maxHeight, startTime, endTime);
+        console.log("Result:", result);
+        entityLst = result.entityNumbers.map(teste => teste.toNumber());
+        idList = result.ids.map(teste => teste.toNumber());
         
         console.log("URLs:", result.urls);
-        console.log("EntityNumbers:", result.entityNumbers);
-        console.log("IDs:", result.ids);
+        console.log("EntityNumbers:", entityLst);
+        console.log("IDs:", idList);
     } catch (error) {
         console.error("Erro ao buscar dados:", error);
     }
-
-    callback();
 };

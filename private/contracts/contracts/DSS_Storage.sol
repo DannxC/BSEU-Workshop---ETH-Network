@@ -33,6 +33,10 @@ contract DSS_Storage {
     // Contract owner address
     address public owner;
 
+    function whoOnwer() public view returns (address) {
+        return owner;
+    }
+
     constructor() {
         // Defining the deployer as owner
         owner = msg.sender;
