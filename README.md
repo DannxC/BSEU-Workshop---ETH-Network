@@ -2,3 +2,5 @@
 Repositório auxiliar para workshop de Hyperledger Besu.
 
 Para maior contexto, acesse: [https://wiki.hyperledger.org/display/events/Como+Operar+e+Usar+Hyperledger+Besu+em+Redes+Publicas+e+Privadas](https://wiki.hyperledger.org/display/events/Como+Operar+e+Usar+Hyperledger+Besu+em+Redes+Publicas+e+Privadas)
+
+# Node tem que ser v18.12.1
