@@ -1,100 +1,111 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+/**
+ * @title DSS Storage
+ * @dev This contract manages the storage, addition, update, and deletion of geospatial data chunks,
+ * utilizing geohash for spatial indexing. It allows for efficient data retrieval and manipulation
+ * based on geohash, height interval, and time interval.
+ */
 contract DSS_Storage {
+    
     /* EVENTS */
 
-    // Events defined to track data additions, updates, and deletions
+    /// @dev Emitted when a new data chunk is added.
     event DataAdded(uint indexed id, string geohash, address indexed addedBy);
+    /// @dev Emitted when existing data chunk is updated.
     event DataUpdated(uint indexed id, string geohash, address indexed updatedBy);
+    /// @dev Emitted when a data chunk is deleted.
     event DataDeleted(uint indexed id, string geohash, address indexed deletedBy);
 
 
     /* STRUCTS */
+
+    /// @dev Represents a height interval with minimum and maximum bounds.
     struct HeightInterval {
         uint min;
         uint max;
     }
 
-    struct TimeInterval {       // Timezone considered is UTC (Coordinated Universal Time)
-        uint start;             // Notice: Timestamps are in seconds and represent time since 1970-01-01 00:00:00 UTC (Unix epoch time)
-        uint end;
+    /// @dev Represents a time interval with start and end times.
+    struct TimeInterval {
+        uint start; // UTC timestamp for interval start.
+        uint end;   // UTC timestamp for interval end.
     }
 
+    /// @dev Contains resource information including URL, entity number, and an identifier.
     struct ResourceInfo {
         string url;
         uint entityNumber;
-        uint id;                // id must be greater than 0
+        uint id; // Must be greater than 0.
     }
 
+    /// @dev Represents a chunk of geospatial data.
     struct ChunkData {
-        address addedBy;
+        address addedBy; // Address of the user who added the chunk.
         HeightInterval height;
         TimeInterval time;
         ResourceInfo resourceInfo;
     }
 
 
-    /* INDEXES */
+    /* STATE VARIABLES */
 
-    // Here, only the active data must be stored. Inactive data must be deleted from the both mappings.
-    // OBS: IDs that was deleted will be considered as inexistent in the future, so it's not necessary to store them in a separate mapping. If necessary, users can reuse the same ID, but it's not recommended.
-    mapping(uint => string[]) public idToGeohash;                       // Mapping from id to geohash
-    mapping(string => ChunkData[]) public geohashToChunkDataArray;      // Mapping from geohash to an array of ChunkData (don't need to be an ordered aray)
-
-    mapping(address => bool) public allowedUsers;       // State to store allowed users
-
-    address public owner;       // Contract owner address
+    /// @dev Maps an ID to an array of geohashes.
+    mapping(uint => string[]) public idToGeohash;
+    /// @dev Maps a geohash to an array of ChunkData.
+    mapping(string => ChunkData[]) public geohashToChunkDataArray;
+    /// @dev Tracks which addresses are allowed to perform certain operations.
+    mapping(address => bool) public allowedUsers;
+    /// @dev Stores the address of the contract owner.
+    address public owner;
 
 
     /* MODIFIERS */
 
-    // Modifier to restrict calls only by allowed users
-    modifier onlyAllowed {
+    /// @dev Ensures that only allowed users can call a function.
+    modifier onlyAllowed() {
         require(allowedUsers[msg.sender], "User not allowed");
         _;
     }
 
-    // Modifier to restrict calls only by the owner
-    modifier onlyOwner {
+    /// @dev Ensures that only the owner can call a function.
+    modifier onlyOwner() {
         require(msg.sender == owner, "Caller is not the owner");
         _;
     }
 
-    // Add a user to the allowedUsers mapping
-    function allowUser(address _user) public onlyOwner {
-        allowedUsers[_user] = true;
-    }
 
-    // Remove a user to the allowedUsers mapping
-    function disallowUser(address _user) public onlyOwner {
-        allowedUsers[_user] = false;
-    }
+    /* FUNCTIONS */
 
-    // Function to change the owner of the contract
-    function changeOwner(address _newOwner) public onlyOwner {
-        owner = _newOwner;
-    }
-
-
-    /* CONSTRUCTOR */
-
-    // Constructor to set the deployer as the owner
+    /// @dev Constructor sets the deployer as the owner and allows the owner to perform operations.
     constructor() {
         owner = msg.sender;
         allowUser(owner);
     }
 
+    /// @dev Allows the owner to grant a user access to perform operations.
+    function allowUser(address _user) public onlyOwner {
+        allowedUsers[_user] = true;
+    }
 
-    /* UTILS */
+    /// @dev Allows the owner to revoke a user's access.
+    function disallowUser(address _user) public onlyOwner {
+        allowedUsers[_user] = false;
+    }
 
-    // no functions needed to be implemented until now
+    /// @dev Transfers contract ownership to a new owner.
+    function changeOwner(address _newOwner) public onlyOwner {
+        owner = _newOwner;
+    }
 
 
     /* UPSERT */
 
-    // Function to add/update a new Polygon, which is a set of geohashes and its corresponding ChunkData
-    // Here, one polygon is a part of a full route
+    /**
+     * @dev Adds or updates a polygon data, represented as a set of geohashes and corresponding ChunkData.
+     * A polygon is part of a full route. This function checks for existing data and updates or deletes as necessary.
+     */
     function upsertPolygonData (
         string[] memory _geohashes,
         uint _minHeight,
@@ -108,72 +119,90 @@ contract DSS_Storage {
         public onlyAllowed
     {
         require(_geohashes.length > 0, "No geohashes provided");
-        require(_maxHeight >= _minHeight, "Max height must be greater than or equal to min height");
-        require(_startTime < _endTime, "Start time must be less than end time");
+        require(_maxHeight >= _minHeight, "Invalid height interval");
+        require(_startTime < _endTime, "Invalid time interval");
 
-        // Create the necessary structs to compose the ChunkData to be added to the geohashToChunkDataArray mapping
+        // Create a new ChunkData object with the provided data.
         HeightInterval memory height = HeightInterval({min: _minHeight, max: _maxHeight});
         TimeInterval memory time = TimeInterval({start: _startTime, end: _endTime});
         ResourceInfo memory resourceInfo = ResourceInfo({url: _url, entityNumber: _entity, id: _id});
-        ChunkData memory newChunkData = ChunkData({addedBy: msg.sender, height: height, time: time, resourceInfo: resourceInfo});   // Create the new ChunkData
+        ChunkData memory newChunkData = ChunkData({
+            addedBy: msg.sender,
+            height: height,
+            time: time,
+            resourceInfo: resourceInfo
+        });
 
-        // Map old geohashes for the given id. Needed to update and delete the old geohashes that are not in the new polygon
-        string[] memory oldGeohashes = idToGeohash[_id];                        // get the old geohashes for the given id
-        bool[] memory oldGeohashesUpdated = new bool[](oldGeohashes.length);    // temporary array to mark the updated geohashes in runtime (refers to the old geohashes)
+        // Maps old geohashes for the given id to update and delete as necessary.
+        string[] memory oldGeohashes = idToGeohash[_id];
+        bool[] memory oldGeohashesUpdated = new bool[](oldGeohashes.length);
 
-        // Update and insert new geohashes, depending if they are already in the old polygon or not (collision check)
-        for (uint i = 0; i < _geohashes.length; i++) {      // Iterate over new hashes for the given id
+        // Iterates over each new geohash provided in the input to add or update polygon data.
+        for (uint i = 0; i < _geohashes.length; i++) {
             string memory currentNewGeohash = _geohashes[i];
-            bool exists = false;
+            bool exists = false; // Flag to check if the current geohash already exists in old geohashes.
 
-            for (uint j = 0; j < oldGeohashes.length; j++) {    // Iterate over old hashes for the given id
-                string memory currentOldGeohash = oldGeohashes[j];
+            // Checks if the current geohash exists in the array of old geohashes.
+            // If it exists, update the corresponding ChunkData.
+            for (uint j = 0; j < oldGeohashes.length; j++) {
+                if (keccak256(abi.encodePacked(currentNewGeohash)) == keccak256(abi.encodePacked(oldGeohashes[j]))) {
+                    exists = true; // Marks that the current new geohash exists in old geohashes.
+                    oldGeohashesUpdated[j] = true; // Marks this geohash as updated in the tracking array.
 
-                // Update the old geohashes that are in the new polygon
-                if (keccak256(abi.encodePacked(currentNewGeohash)) == keccak256(abi.encodePacked(currentOldGeohash))) {
-                    exists = true;
-                    oldGeohashesUpdated[j] = true; // Mark the updated geohash in the temporary array
+                    // Calls updateChunkData to update the existing ChunkData with the new data.
                     updateChunkData(currentNewGeohash, newChunkData);
-                    break;
+                    break; // Breaks the loop since the update is done.
                 }
             }
 
-            // Insert the new geohashes that are not in the old polygon
+            // If the current new geohash does not exist in the old geohashes, insert it as new data.
             if (!exists) {
                 insertChunkData(currentNewGeohash, newChunkData);
             }
         }
 
-        // Delete the old geohashes that are not in the new polygon
+        // Deletes the old geohashes that were not marked as updated.
+        // This step ensures that any geohash not included in the new set of geohashes is removed.
         for (uint i = 0; i < oldGeohashes.length; i++) {
-            if (!oldGeohashesUpdated[i]) {
-                deleteChunkData(_id, oldGeohashes[i]);
+            if (!oldGeohashesUpdated[i]) { // Checks if the geohash was not updated.
+                deleteChunkData(_id, oldGeohashes[i]); // Deletes the ChunkData associated with the old geohash.
             }
         }
+
     }
+
 
 
     /* INSERT */
 
-    // Function to add new ChunkData
-    function insertChunkData (
-        string memory _geohash, 
-        ChunkData memory _chunkData
-    ) 
-        private onlyAllowed
-    {
+    /**
+     * @dev Inserts new ChunkData for a given geohash. This function is called internally
+     * to add data without duplicating logic for single or batch insertions.
+     * @param _geohash The geohash representing the spatial location of the data.
+     * @param _chunkData The ChunkData structure containing the data to be added.
+     */
+    function insertChunkData(string memory _geohash, ChunkData memory _chunkData) private onlyAllowed {
         uint currentId = _chunkData.resourceInfo.id;
 
-        // Add the id to the idToGeohash mapping and the ChunkData to the geohashToChunkDataArray mapping
+        // Append the geohash to the mapping of ID to geohashes.
         idToGeohash[currentId].push(_geohash);
+
+        // Append the new ChunkData to the array of ChunkData for the given geohash.
         geohashToChunkDataArray[_geohash].push(_chunkData);
-        emit DataAdded(currentId, _geohash, msg.sender);
+
+        // Emit an event to log the addition of new data.
+        emit DataAdded(currentId, _geohash, _chunkData.addedBy);
     }
 
 
     /* UPDATE */
 
-    // Function to update a single ChunkData
+    /**
+     * @dev Updates the data for a specific ChunkData entry identified by geohash and internal ID.
+     * Access is restricted to the data's original creator.
+     * @param _geohash The geohash of the ChunkData to be updated.
+     * @param _chunkData The new ChunkData to replace the existing entry.
+     */
     function updateChunkData(
         string memory _geohash, 
         ChunkData memory _chunkData
@@ -181,131 +210,181 @@ contract DSS_Storage {
         private onlyAllowed
     {
         if (_chunkData.addedBy != msg.sender) {
+            // Abort if the caller is not the original creator of the ChunkData.
             return;
         }
 
+        // Get the ID of the ChunkData to be updated.
         uint currentId = _chunkData.resourceInfo.id;
         require(idToGeohash[currentId].length > 0, "No data to be updated for the given id");
 
-        // Iterate over the array of ChunkData for the given geohash and update the data for the given id
-        ChunkData[] storage currentChunkDataArray = geohashToChunkDataArray[_geohash];
-        for (uint i = 0; i < currentChunkDataArray.length; i++) {
-            if (currentChunkDataArray[i].resourceInfo.id == currentId) {
-                currentChunkDataArray[i].height = _chunkData.height;
-                currentChunkDataArray[i].time = _chunkData.time;
-                currentChunkDataArray[i].resourceInfo = _chunkData.resourceInfo;
+        // Find and update the specified ChunkData within the array.
+        ChunkData[] storage chunkDataArray = geohashToChunkDataArray[_geohash];
+        for (uint i = 0; i < chunkDataArray.length; i++) {
+            if (chunkDataArray[i].resourceInfo.id == currentId) {
+                chunkDataArray[i] = _chunkData;
+                emit DataUpdated(currentId, _geohash, msg.sender);
                 break;
             }
         }
-        
-        emit DataUpdated(currentId, _geohash, msg.sender);
     }
 
 
     /* DELETE */
 
-    // Function to delete a Batch of ChunkData by its ids
+    /**
+     * @dev Deletes a batch of ChunkData identified by their IDs. This function allows for efficient
+     * removal of multiple data entries and is accessible only to allowed users.
+     * @param _ids An array of IDs corresponding to the ChunkData entries to be deleted.
+     */
     function deletePolygonData(uint[] memory _ids) public onlyAllowed {
         require(_ids.length > 0, "No ids provided");
 
-        // Delete the ChunkData for each geohash for each id
+        // Iterate through the provided IDs to delete the associated ChunkData.
         for (uint i = 0; i < _ids.length; i++) {
             uint currentId = _ids[i];
-            string[] memory currentGeohashes = idToGeohash[currentId];
+            string[] memory geohashes = idToGeohash[currentId];
 
-            for (uint j = 0; j < currentGeohashes.length; j++) {
-                deleteChunkData(currentId, currentGeohashes[j]);
+            for (uint j = 0; j < geohashes.length; j++) {
+                deleteChunkData(currentId, geohashes[j]);
             }
         }
     }
-
-    // Function to remove a ChunkData from the array of a given geohash by its id
+    
+    /**
+     * @dev Removes a specific ChunkData entry identified by its ID from the geohash mapping.
+     * This operation is restricted to the creator of the ChunkData. It updates both the
+     * geohash to ChunkData mapping and the ID to geohash mapping to ensure data integrity.
+     * @param _id The unique identifier of the ChunkData to be removed.
+     * @param _geohash The geohash string that the ChunkData is associated with.
+     */
     function deleteChunkData(uint _id, string memory _geohash) private {
+        // Retrieve the array of ChunkData associated with the given geohash.
         ChunkData[] storage currentChunkDataArray = geohashToChunkDataArray[_geohash];
+
+        // Retrieve the array of geohashes associated with the given ID.
         string[] storage currentGeohashes = idToGeohash[_id];
 
-        // Delete from geohashToChunkDataArray the specific ChunkData
+        // Iterate through the ChunkData array to find and remove the specified ChunkData.
         for (uint i = 0; i < currentChunkDataArray.length; i++) {
-            ChunkData storage currentChunkData = currentChunkDataArray[i];
-            if (currentChunkData.resourceInfo.id == _id) {
-                if (currentChunkData.addedBy != msg.sender) {
+            if (currentChunkDataArray[i].resourceInfo.id == _id) {
+                // Check if the caller is the creator of the ChunkData.
+                if (currentChunkDataArray[i].addedBy != msg.sender) {
+                    // If not, exit the function without making changes.
                     return;
                 }
-                currentChunkData = currentChunkDataArray[currentChunkDataArray.length - 1]; // Move the last element to the position of the element to be deleted
-                currentChunkDataArray.pop();    // Delete the last element
-                break;
+
+                // Replace the ChunkData to be deleted with the last element in the array.
+                currentChunkDataArray[i] = currentChunkDataArray[currentChunkDataArray.length - 1];
+
+                // Remove the last element, effectively deleting the specified ChunkData.
+                currentChunkDataArray.pop();
+                
+                break; // Exit the loop after deleting the ChunkData.
             }
         }
 
-        // Delete from idtoGeohash mapping the specific geohash
+        // Iterate through the geohash array to update the ID to geohash mapping.
         for (uint i = 0; i < currentGeohashes.length; i++) {
-            string storage currentGeohash = currentGeohashes[i];
-            if (keccak256(abi.encodePacked(currentGeohash)) == keccak256(abi.encodePacked(_geohash))) {
-                currentGeohash = currentGeohashes[currentGeohashes.length - 1]; // Move the last element to the position of the element to be deleted
-                currentGeohashes.pop();    // Delete the last element
-                break;
+            if (keccak256(abi.encodePacked(currentGeohashes[i])) == keccak256(abi.encodePacked(_geohash))) {
+                // Replace the geohash to be deleted with the last element in the array.
+                currentGeohashes[i] = currentGeohashes[currentGeohashes.length - 1];
+
+                // Remove the last element, effectively deleting the specified geohash from the ID mapping.
+                currentGeohashes.pop();
+
+                break; // Exit the loop after updating the mapping.
             }
         }
 
+        // Emit an event to log the deletion of the ChunkData.
         emit DataDeleted(_id, _geohash, msg.sender);
     }
 
 
+
     /* RETRIEVE */
 
-    // Function to retrieve data for a given geohash, height interval and time interval. Parameters works as filters.
+    /**
+     * @dev Retrieves data matching the specified criteria. This function allows users to query
+     * data based on geohash, height interval, and time interval, facilitating efficient data lookup.
+     * @param _geohash The geohash to query.
+     * @param _minHeight The minimum height of the data.
+     * @param _maxHeight The maximum height of the data.
+     * @param _startTime The start time of the data interval.
+     * @param _endTime The end time of the data interval.
+     * @return urls An array of URLs for the matching data.
+     * @return entityNumbers An array of entity numbers for the matching data.
+     * @return ids An array of IDs for the matching data.
+     */
     function getData(
         string memory _geohash, 
         uint _minHeight, 
         uint _maxHeight, 
         uint _startTime, 
         uint _endTime
-    ) 
-        public view 
-        returns (
-            string[] memory urls, 
-            uint[] memory entityNumbers, 
-            uint[] memory ids
-        ) 
-    {
-        require(_maxHeight >= _minHeight, "Max height must be greater than or equal to min height");
-        require(_startTime < _endTime, "Start time must be less than end time");
+    ) public view returns (string[] memory urls, uint[] memory entityNumbers, uint[] memory ids) {
+        require(_maxHeight >= _minHeight, "Invalid height interval");
+        require(_startTime < _endTime, "Invalid time interval");
 
-        // Get the array of ChunkData for the given geohash
-        ChunkData[] storage currentChunkDataArray = geohashToChunkDataArray[_geohash];
-
-        // Determine how many elements satisfy the criteria to allocate memory for the arrays
+        ChunkData[] storage chunkDataArray = geohashToChunkDataArray[_geohash];
         uint count = 0;
-        for (uint i = 0; i < currentChunkDataArray.length; i++) {
-            ChunkData storage currentChunkData = currentChunkDataArray[i];
-            if (currentChunkData.height.min <= _maxHeight && currentChunkData.height.max >= _minHeight && 
-                currentChunkData.time.start < _endTime && currentChunkData.time.end > _startTime) {
+
+        // Determine the number of entries that match the criteria.
+        for (uint i = 0; i < chunkDataArray.length; i++) {
+            if (meetsCriteria(chunkDataArray[i], _minHeight, _maxHeight, _startTime, _endTime)) {
                 count++;
             }
         }
 
-        // Alocate memory for the arrays
+        // Allocate memory for the output arrays based on the count.
         urls = new string[](count);
         entityNumbers = new uint[](count);
         ids = new uint[](count);
 
-        // Fill the arrays with the data that satisfies the criteria
-        uint j = 0;
-        for (uint i = 0; i < currentChunkDataArray.length && j < count; i++) {
-            ChunkData storage currentChunkData = currentChunkDataArray[i];
-            if (currentChunkData.height.min <= _maxHeight && currentChunkData.height.max >= _minHeight && 
-                currentChunkData.time.start < _endTime && currentChunkData.time.end > _startTime) {
-                urls[j] = currentChunkData.resourceInfo.url;
-                entityNumbers[j] = currentChunkData.resourceInfo.entityNumber;
-                ids[j] = currentChunkData.resourceInfo.id;
-                j++;
+        // Populate the output arrays with data that meets the criteria.
+        uint index = 0;
+        for (uint i = 0; i < chunkDataArray.length && index < count; i++) {
+            if (meetsCriteria(chunkDataArray[i], _minHeight, _maxHeight, _startTime, _endTime)) {
+                urls[index] = chunkDataArray[i].resourceInfo.url;
+                entityNumbers[index] = chunkDataArray[i].resourceInfo.entityNumber;
+                ids[index] = chunkDataArray[i].resourceInfo.id;
+                index++;
             }
         }
 
         return (urls, entityNumbers, ids);
     }
 
-    // Revert fallback and receive functions
+    /**
+     * @dev Evaluates if a given ChunkData meets specified criteria based on height and time intervals.
+     * This function is used to filter ChunkData during data retrieval operations, ensuring that only
+     * data entries matching all criteria are selected.
+     * 
+     * @param _chunkData The ChunkData structure to evaluate.
+     * @param _minHeight The minimum height value of the filtering criteria.
+     * @param _maxHeight The maximum height value of the filtering criteria.
+     * @param _startTime The start time value (inclusive) of the filtering criteria, represented as a UNIX timestamp.
+     * @param _endTime The end time value (exclusive) of the filtering criteria, represented as a UNIX timestamp.
+     * 
+     * @return bool Returns true if the ChunkData satisfies all criteria; otherwise, returns false.
+     */
+    function meetsCriteria(
+        ChunkData memory _chunkData, 
+        uint _minHeight, 
+        uint _maxHeight, 
+        uint _startTime, 
+        uint _endTime
+    ) private pure returns (bool) {
+        return _chunkData.height.min <= _maxHeight && _chunkData.height.max >= _minHeight && 
+               _chunkData.time.start < _endTime && _chunkData.time.end > _startTime;
+    }
+    
+
+    /* FALLBACK FUNCTIONS */
+
+    // Prevents accidental Ether transfers to the contract.
+
     fallback() external {
         revert();
     }
