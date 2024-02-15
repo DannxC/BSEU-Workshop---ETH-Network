@@ -119,7 +119,6 @@ sleep 5
 
 echo "Deploying contract..."
 
-truffle migrate --f 3 --to 3 --network development
-truffle migrate --f 5 --to 5 --network development
+truffle migrate --f 1 --to 5 --network development
 
 # Nota: O truffle está sendo descontinuado, então é bom mudar para um Hardhat ou algo do tipo no futuro
