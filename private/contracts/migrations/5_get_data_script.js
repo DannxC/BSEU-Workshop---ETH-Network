@@ -6,7 +6,7 @@ module.exports = async function(callback) {
     try {
         const instance = await DSS_Storage.deployed();
 
-        const geohash = "s2fd123";
+        const geohash = "s2fd125";
         const minHeight = 100;
         const maxHeight = 200;
         const startTime = Math.floor(Date.now() / 1000); // Agora

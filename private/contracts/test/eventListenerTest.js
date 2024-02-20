@@ -18,7 +18,7 @@ async function getEvents() {
         'DataUpdated', // change if your looking for a different event
         { fromBlock: historical_block, toBlock: 'latest' }
     );
-    console.log(events.length);
+    console.log(events);
     // await getTransferDetails(events);
 };
 
