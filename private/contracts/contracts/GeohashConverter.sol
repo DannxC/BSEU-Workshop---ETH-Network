@@ -19,13 +19,19 @@ contract GeohashConverter {
         // Example: geohashPrecisionMap[1] = 5000000; etc.
     }
 
-        // CONSTANTS
+    // CONSTANTS
     uint256 constant public DECIMALS = 18;                          // Number of decimals to use for the geohash precision
     int256 constant public DECIMALS_FACTOR = int256(10**DECIMALS);  // Factor to scale the geohash precision to an integer: 1000000000000000000
     int256 constant public MIN_LATITUDE  =  -90 * DECIMALS_FACTOR;
     int256 constant public MAX_LATITUDE  =   90 * DECIMALS_FACTOR;
     int256 constant public MIN_LONGITUDE = -180 * DECIMALS_FACTOR;
     int256 constant public MAX_LONGITUDE =  180 * DECIMALS_FACTOR;
+    enum Direction {        // used in the moveGeohash function
+        Up,
+        Down,
+        Left,
+        Right
+    }
 
 
     // uint256 constant public PI = 3141592653589793238;       // Aproximação de PI com fator de escala 10^18 para trabalhar com inteiros
@@ -91,6 +97,70 @@ contract GeohashConverter {
         return geohash;
     }
 
+    // Additional helper function to handle the directional movement based on steps
+    // This is a placeholder for the logic required to actually compute these movements.
+    function singleMoveGeohash(bytes32 _geohash, uint8 precision, Direction _direction) public pure returns (bytes32) {
+        bytes32 result = _geohash;
+        bytes32 partialGeohash = _geohash;
+
+        // Based on the direction ('right', 'left', 'up', 'down'), and steps, calculate the new geohash.
+        for (uint i = precision; i > 0; i--) {
+            // Read last 2 bits of partialGeohash
+            bytes32 current2Bits = partialGeohash & bytes32(uint256(3));   // _geohash AND 00000...00011
+            uint256 current2BitsInt = uint256(current2Bits);
+
+            // Based on desired move, flows the Z-Order in the current precision-level (i) and discover how to modify the pair of 2-bits representing that precision-level
+            //
+            // Obs: We are considering 2d plane of the globe, so up and down movements are a little bit wrong in the borders...
+            // but the left and right are doing the wrap very well in the borders of the 2D representation (remember it is a cylinder projection of the sphere)
+            // In the end, we are considering that the hashes never need to goes up or down in the borders, but could do left right well.
+            if(_direction == Direction.Up) {
+                if (current2BitsInt == 0 || current2BitsInt == 1) {
+                    result = bytes32(uint256(result) + uint256(2 * 4**(precision - i)));   //      sum 10 left-shifted 2*(precision - i) times
+                } else if(current2BitsInt == 2 || current2BitsInt == 3) {
+                    result = bytes32(uint256(result) - uint256(2 * 4**(precision - i)));   // subtract 10 left-shifted 2*(precision - i) times
+                    break;
+                } else {
+                    revert("last2Bits was not correctly converted (bytes32 -> int256)");
+                }
+            } else if(_direction == Direction.Down) {
+                if (current2BitsInt == 0 || current2BitsInt == 1) {
+                    result = bytes32(uint256(result) + uint256(2 * 4**(precision - i)));   //      sum 10 left-shifted 2*(precision - i) times
+                    break;
+                } else if(current2BitsInt == 2 || current2BitsInt == 3) {
+                    result = bytes32(uint256(result) - uint256(2 * 4**(precision - i)));   // subtract 10 left-shifted 2*(precision - i) times
+                } else {
+                    revert("last2Bits was not correctly converted (bytes32 -> int256)");
+                }
+            } else if(_direction == Direction.Left) {
+                if (current2BitsInt == 0 || current2BitsInt == 2) {
+                    result = bytes32(uint256(result) + uint256(1 * 4**(precision - i)));   //      sum 01 left-shifted 2*(precision - i) times
+                } else if(current2BitsInt == 1 || current2BitsInt == 3) {
+                    result = bytes32(uint256(result) - uint256(1 * 4**(precision - i)));   // subtract 01 left-shifted 2*(precision - i) times
+                    break;
+                } else {
+                    revert("last2Bits was not correctly converted (bytes32 -> int256)");
+                }
+            } else if(_direction == Direction.Right) {
+                if (current2BitsInt == 0 || current2BitsInt == 2) {
+                    result = bytes32(uint256(result) + uint256(1 * 4**(precision - i)));   //      sum 01 left-shifted 2*(precision - i) times
+                    break;
+                } else if(current2BitsInt == 1 || current2BitsInt == 3) {
+                    result = bytes32(uint256(result) - uint256(1 * 4**(precision - i)));   // subtract 01 left-shifted 2*(precision - i) times
+                } else {
+                    revert("last2Bits was not correctly converted (bytes32 -> int256)");
+                }
+            } else{
+                revert("Direction wasn't correctly specified");
+            }
+
+            // Att partialGeohash (we already used the last 2 bits, so throw them away.
+            partialGeohash = partialGeohash >> 2;
+        }
+
+        return result;
+    }
+
     // Function to rasterize the edge of the polygon using the DDA algorithm
     function rasterizeEdge(int256 x0, int256 y0, int256 x1, int256 y1) internal pure returns () {
         // Handle horizontal and vertical edges separetely
@@ -126,33 +196,5 @@ contract GeohashConverter {
         // Return the comprehensive list of geohashes
     }
 
-    // Helper functions such as converting (x, y) coordinates to grid cells, identifying unique geohashes, etc., can be added as needed.
-
-    // Assuming a function that can calculate the next geohash in a given direction
-    // by a certain number of steps. This is highly conceptual and skips over
-    // the complexity of actual geohash calculation.
-
-    function getRight(string currentGeohash, uint steps = 1) internal pure returns (string) {
-        // Calculate and return the geohash to the right of the current one by 'steps'
-    }
-
-    function getLeft(string currentGeohash, uint steps = 1) internal pure returns (string) {
-        // Calculate and return the geohash to the left of the current one by 'steps'
-    }
-
-    function getAbove(string currentGeohash, uint steps = 1) internal pure returns (string) {
-        // Calculate and return the geohash above the current one by 'steps'
-    }
-
-    function getBelow(string currentGeohash, uint steps = 1) internal pure returns (string) {
-        // Calculate and return the geohash below the current one by 'steps'
-    }
-
-    // Additional helper function to handle the directional movement based on steps
-    // This is a placeholder for the logic required to actually compute these movements.
-    function moveGeohash(string currentGeohash, string memory direction, uint steps) internal pure returns (string) {
-        // Based on the direction ('right', 'left', 'above', 'below'), and steps, calculate the new geohash.
-        // This would involve complex logic not shown here, including possibly decoding the current geohash,
-        // adjusting latitude or longitude accordingly, and then re-encoding to a new geohash.
-    }
+    // Helper functions such as converting (x, y) coordinates to grid cells, identifying unique geohashes, etc., can be added as needed
 }
