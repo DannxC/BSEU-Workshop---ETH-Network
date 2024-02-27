@@ -12,6 +12,11 @@ contract GeohashConverter {
         Right
     }
 
+    struct Point {
+        int256 lat;
+        int256 lon;
+    }
+
     struct Move {
         Direction lat;
         Direction lon;
@@ -485,39 +490,86 @@ contract GeohashConverter {
             // se for par, entao este label nao representa uma regiao interna e podemos ir para o proximo label
             j = 0;
             count = 0;
-            for (j = 0; j < latitudes.length; j++) {    // we are considering the first point included and the second point excluded
-                uint idx = (j + 1) % latitudes.length;
-                uint lat1 = latitudes[j];
-                uint lon1 = longitudes[j];
-                uint lat2 = latitudes[idx];
-                uint lon2 = longitudes[idx];6
-                move = Move({   // From 1 to 2
-                    lat: (lat2 > lat1) ? Direction.Up : Direction.Down,
-                    lon: (lon2 > lon1) ? Direction.Right : Direction.Left
-                });
+            uint idx;
+
+            // Handle with Vertexes possible cases of intersection with the ray
+            for (j = 0; j < latitudes.length; j++) {
+                if (lat == latitudes[j] && lon < longitudes[j]) {
+                    // Verify if the first non-horizontal leftIndex-edge is up or down
+                    idx = (j + latitudes.length - 1) % latitudes.length;
+                    while (latitudes[idx] == latitudes[(idx + 1) % latitudes.length]) {
+                        idx = (idx + latitudes.length - 1) % latitudes.length;      // decrementa um indice
+                    }
+                    move = Move({
+                        lat: (latitudes[idx] < latitudes[(idx + 1) % latitudes.length]) ? Direction.Up : Direction.Down,
+                        lon: Direction.Left // Doesn't matter in this case... could be anything
+                    });
+
+                    // Now let's verify if the first non-horizontal rightIndex-edge is up or down
+                    idx = j;
+                    while (latitudes[idx] == latitudes[(idx + 1) % latitudes.length]) {
+                        idx = (idx + 1) % latitudes.length;      // incrementa um indice
+                    }
+                    // Now, if the lat direction is different from the previous one, we have an intersection. If it is the same, we don't have an intersection, it is just a peak vertex.
+                    if (move.lat != ((latitudes[idx] < latitudes[(idx + 1) % latitudes.length]) ? Direction.Up : Direction.Down)) {
+                        count++;
+                    }
+                }
+            }
+
+            // Handle with Edges as open-intervals (excluding vertexes)
+            for (j = 0; j < latitudes.length; j++) {
+                idx = (j + 1) % latitudes.length;
+                Point memory p1 = Point({lat: latitudes[j], lon: longitudes[j]});
+                Point memory p2 = Point({lat: latitudes[idx], lon: longitudes[idx]});
 
                 // Handle with horizontal edges case. Remember it is impossible to be inside the edge itself, so we can skip it.
-                if (lat1 == lat2) {
+                if (p1.lat == p2.lat) {
                     continue;
                 }
 
+                move = Move({   // From 1 to 2
+                    lat: (p2.lat > p1.lat) ? Direction.Up : Direction.Down,
+                    lon: (p2.lon > p1.lon) ? Direction.Right : Direction.Left
+                });
 
+                // Conditions to check if the ray intersects the edge. If it does, increment the count.
+                if ((move.lat == Direction.Up) ? (p1.lat < lat && lat < p2.lat) : (p2.lat < lat && lat < p1.lat)) {       // Include only cases where the ray are in the limits of the edge (latitudes)
+                    if (p1.lon == p2.lon) {     // Handle with vertical edges case.
+                        if (lon < p1.lon) {
+                            count++;
+                            continue;
+                        }
+                    } else {    // Diagonal edges case
+                        // region I - rectangle region
+                        if ((move.lon == Direction.Right) ? (lon < p1.lon) : (lon < p2.lon)) {
+                            count++;
+                            continue;
+                        } 
 
-
-
-                // 1a condicao - se a lat for fora dos limites do edge, podemos descartar a possibilidade de interseccao da semirreta com ele.
-                if (lat > (move.lat == Direction.Up ? lat2 : lat1) || lat < (move.lat == Direction.Up ? lat1 : lat2)) {
-                    continue;
-                }                
+                        // region II - triangle region
+                        if (((move.lat == Direction.Up && move.lon == Direction.Right) || (move.lat == Direction.Down && move.lon == Direction.Left) ) ?
+                                (lat - p1.lat) * (p2.lon - p1.lon) > (p2.lat - p1.lat) * (lon - p1.lon) : // 2o and 3o quadrants
+                                (lat - p1.lat) * (p2.lon - p1.lon) < (p2.lat - p1.lat) * (lon - p1.lon)   // 1o and 4o quadrants
+                            ) {
+                            count++;
+                            continue;
+                        }
+                    }
+                }
             }
 
+            // Verificar se o i-esimo label realmente é ou não uma regiao interna
+            // Se for interno, marcar como true no geohashMap todos os geohashes referentes a este label
+            // Se count é par, então este label não representa uma região interna e podemos ir para o próximo label
+            if (count % 2 == 0) {
+                continue;
+            }
 
+            // Aqui, o label é uma região interna. Marcar como true todos os geohashes referentes a este label
             for (j = 0; j < labelToGeohashes[i].length; j++) {
                 currentGeohash = labelToGeohashes[i][j];
-                // Verificar se o label representa uma regiao interna
-                // Se for interno, marcar como true no geohashMap
-
-
+                geohashMap[currentGeohash] = true;
             }
         }
 
