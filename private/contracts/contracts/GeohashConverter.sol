@@ -2,20 +2,8 @@
 pragma solidity ^0.8.0;
 
 contract GeohashConverter {
-    // CONSTANTS
-    uint256 constant public DECIMALS = 18;                          // Number of decimals to use for the geohash precision
-    int256 constant public DECIMALS_FACTOR = int256(10**DECIMALS);  // Factor to scale the geohash precision to an integer: 1000000000000000000
-    // uint256 constant public PI = 3141592653589793238;       // Aproximação de PI com fator de escala 10^18 para trabalhar com inteiros
 
-    uint8 immutable public geohashMaxPrecision;                // This sets geohash precision to a fixed value (0-16)
-                                                            // OBS: For precision: 8 -> 7781.98 km² ; 12 -> 30,39 km² ; 14 -> 1,899 km² ; 16 -> 0,118 km²
-    int256 immutable public gridCellLatSize;
-    int256 immutable public gridCellLonSize;
-
-    int256 constant public MIN_LATITUDE  =  -90 * DECIMALS_FACTOR;
-    int256 constant public MAX_LATITUDE  =   90 * DECIMALS_FACTOR;
-    int256 constant public MIN_LONGITUDE = -180 * DECIMALS_FACTOR;
-    int256 constant public MAX_LONGITUDE =  180 * DECIMALS_FACTOR;
+    /* STRUCTS */
 
     enum Direction {        // used in the moveGeohash function
         Up,
@@ -39,9 +27,34 @@ contract GeohashConverter {
         uint256 height;
     }
 
-    
+
+    /* STATE VARIABLES */
+
+    // CONSTANTS
+    uint256 constant public DECIMALS = 18;                          // Number of decimals to use for the geohash precision
+    int256 constant public DECIMALS_FACTOR = int256(10**DECIMALS);  // Factor to scale the geohash precision to an integer: 1000000000000000000
+    // uint256 constant public PI = 3141592653589793238;       // Aproximação de PI com fator de escala 10^18 para trabalhar com inteiros
+
+    uint8 immutable public geohashMaxPrecision;                // This sets geohash precision to a fixed value (0-16)
+                                                            // OBS: For precision: 8 -> 7781.98 km² ; 12 -> 30,39 km² ; 14 -> 1,899 km² ; 16 -> 0,118 km²
+    int256 immutable public gridCellLatSize;
+    int256 immutable public gridCellLonSize;
+
+    int256 constant public MIN_LATITUDE  =  -90 * DECIMALS_FACTOR;
+    int256 constant public MAX_LATITUDE  =   90 * DECIMALS_FACTOR;
+    int256 constant public MIN_LONGITUDE = -180 * DECIMALS_FACTOR;
+    int256 constant public MAX_LONGITUDE =  180 * DECIMALS_FACTOR;
+
     //mapping(uint8 => int256) public geohashPrecisionMap; // Example: This allows for dynamic precision
     mapping(bytes32 => bool) public geohashMap; // Map to store unique geohashes from the polygon processing algorithm result
+
+    // Estrutura para mapear labels a geohashes
+    mapping(uint256 => bytes32[]) public labelToGeohashes;
+    // Equivalency List to be used in the fillPolygon function
+    uint256[] public labelEquivalencyList;
+    
+
+    /* FUNCTIONS */
 
     constructor (uint8 precision) {
         require (precision <= 16, "Maximum precision must be less then 16");      // Geohash is stored as a bytes4 (32 bits), so precision must be between 1 and 16 since each precision level adds 2 bits
@@ -101,6 +114,52 @@ contract GeohashConverter {
         }
 
         return geohash;
+    }
+
+    // Function to return the middle point of a given geohash
+    function geohashToLatLong(bytes32 _geohash, uint8 precision) public view returns (int256 lat, int256 lon) {
+        require(precision <= geohashMaxPrecision, "Precision must be less than or equal to the maximum precision");
+
+        // Initial limits of lat and lon
+        int256 upBound    = MAX_LATITUDE;
+        int256 downBound  = MIN_LATITUDE;
+        int256 leftBound  = MIN_LONGITUDE;
+        int256 rightBound = MAX_LONGITUDE;
+
+
+        // Loop para calcular o geohash de acordo com a precisão
+        for (uint i = precision; i > 0; i--) {
+
+            // Read the 2 bits of the current precision level
+            uint256 current2Bits = (uint256(_geohash) >> (2 * (i - 1))) & 3;    // _geohash >> 2*(i-1) AND 00000...00011
+
+            // Atualiza os midpoints para a próxima iteração
+            int256 midLat = downBound + (upBound - downBound) / 2;
+            int256 midLon = leftBound + (rightBound - leftBound) / 2;
+
+            // Determina a localização em relação aos midpoints e atualiza os bounds (Z-Order)
+            if (current2Bits == 0) { // Quadrante superior esquerdo
+                downBound = midLat;
+                rightBound = midLon;
+            } else if (current2Bits == 1) { // Quadrante superior direito
+                downBound = midLat;
+                leftBound = midLon;
+            } else if (current2Bits == 2) { // Quadrante inferior esquerdo
+                upBound = midLat;
+                rightBound = midLon;
+            } else if (current2Bits == 3) { // Quadrante inferior direito
+                upBound = midLat;
+                leftBound = midLon;
+            } else {
+                    revert("last2Bits was not correctly converted (bytes32 -> int256)");
+            }
+        }
+
+        // Calcula o ponto médio do quadrante final
+        lat = downBound + (upBound - downBound) / 2;
+        lon = leftBound + (rightBound - leftBound) / 2;
+
+        return (lat, lon);
     }
 
     // Additional helper function to handle the directional movement based on steps
@@ -169,25 +228,13 @@ contract GeohashConverter {
         return result;
     }
 
-    // Function to fill the interior of the polygon
-    // obs: x and y are already scaled by DECIMALS_FACTOR
-    function fillPolygon(string[] memory edgeGeohashes, int256 minX, int256 minY, int256 maxX, int256 maxY) internal pure returns (string[] memory) {
-        // Placeholder for the polygon filling algorithm
-        // Should return a list of geohashes that are inside the polygon
-    }
-
     // Distance between two lattitude and longitude points (approximation in 2D plane, not the real distance in the sphere)
     // OBS: We are calculating the distance in a 2D plane, so it is not the real distance in the sphere
-    function latLongSquareDistance(int256 lat1, int256 lon1, int256 lat2, int256 lon2) public pure returns (int256) {
-        require(lon1 >= MIN_LONGITUDE && lon1 <= MAX_LONGITUDE, "lon1 out of valid limits.");
-        require(lat1 >= MIN_LATITUDE && lat1 <= MAX_LATITUDE, "lat1 out of valid limits.");
-        require(lon2 >= MIN_LONGITUDE && lon2 <= MAX_LONGITUDE, "lon2 out of valid limits.");
-        require(lat2 >= MIN_LATITUDE && lat2 <= MAX_LATITUDE, "lat2 out of valid limits.");
+    function squareDistance(int256 x1, int256 y1, int256 x2, int256 y2) public pure returns (int256) {
+        int256 dX = x2 - x1;
+        int256 dY = y2 - y1;
 
-        int256 dLat = lat2 - lat1;
-        int256 dLon = lon2 - lon1;
-
-        return dLat * dLat + dLon * dLon;
+        return dX * dX + dY * dY;
     }
 
     // Math step function to round to teh ground integer miltiple of stepSize
@@ -196,7 +243,8 @@ contract GeohashConverter {
         if (x >= 0) {
             return x - (x % stepSize);
         } else {
-            return x - (x % stepSize) - stepSize;
+            int256 remainder = x % stepSize;
+            return remainder == 0 ? x : x - remainder - stepSize;
         }
     }
 
@@ -266,9 +314,9 @@ contract GeohashConverter {
 
             // Calculate the square distance to the next grid intersection for each grid axis
             int256[] memory squareDistances = new int256[](3); // idx = 0 -> lat ; idx = 1 -> lon ; idx = 2 -> segment
-            squareDistances[0] = latLongSquareDistance(lat1, lon1, gridLat, (lon1 + (lon2 - lon1) * (gridLat - lat1) / (lat2 - lat1)));
-            squareDistances[1] = latLongSquareDistance(lat1, lon1, (lat1 + (lat2 - lat1) * (gridLon - lon1) / (lon2 - lon1)), gridLon);
-            squareDistances[2] = latLongSquareDistance(lat1, lon1, lat2, lon2);
+            squareDistances[0] = squareDistance(lat1, lon1, gridLat, (lon1 + (lon2 - lon1) * (gridLat - lat1) / (lat2 - lat1)));
+            squareDistances[1] = squareDistance(lat1, lon1, (lat1 + (lat2 - lat1) * (gridLon - lon1) / (lon2 - lon1)), gridLon);
+            squareDistances[2] = squareDistance(lat1, lon1, lat2, lon2);
 
             // First segment geohash
             currentGeohash = latLongToZOrderGeohash((lat1 + gridLat) / 2, (lon1 + gridLon) / 2, precision);
@@ -280,8 +328,8 @@ contract GeohashConverter {
                 if (abs(squareDistances[0] - squareDistances[1]) <= 10) {        // Handle the grid intersection case with a little threshold
                     gridLat += (move.lat == Direction.Up) ? gridCellLatSize : -gridCellLatSize;
                     gridLon += (move.lon == Direction.Right) ? gridCellLonSize : -gridCellLonSize;
-                    squareDistances[0] = latLongSquareDistance(lat1, lon1, gridLat, (lon1 + (lon2 - lon1) * (gridLat - lat1) / (lat2 - lat1)));
-                    squareDistances[1] = latLongSquareDistance(lat1, lon1, (lat1 + (lat2 - lat1) * (gridLon - lon1) / (lon2 - lon1)), gridLon);
+                    squareDistances[0] = squareDistance(lat1, lon1, gridLat, (lon1 + (lon2 - lon1) * (gridLat - lat1) / (lat2 - lat1)));
+                    squareDistances[1] = squareDistance(lat1, lon1, (lat1 + (lat2 - lat1) * (gridLon - lon1) / (lon2 - lon1)), gridLon);
 
                     // Move in the diagonal and mark all quadrants
                     currentGeohash = singleMoveGeohash(currentGeohash, precision, move.lat);
@@ -295,14 +343,14 @@ contract GeohashConverter {
                 }
                 else if (squareDistances[0] < squareDistances[1]) {    // Move in the latitude direction
                     gridLat += (move.lat == Direction.Up) ? gridCellLatSize : -gridCellLatSize;
-                    squareDistances[0] = latLongSquareDistance(lat1, lon1, gridLat, (lon1 + (lon2 - lon1) * (gridLat - lat1) / (lat2 - lat1)));
+                    squareDistances[0] = squareDistance(lat1, lon1, gridLat, (lon1 + (lon2 - lon1) * (gridLat - lat1) / (lat2 - lat1)));
 
                     currentGeohash = singleMoveGeohash(currentGeohash, precision, move.lat);
                     geohashMap[currentGeohash] = true;
 
                 } else if (squareDistances[0] > squareDistances[1]) {   // Move in the longitude direction
                     gridLon += (move.lon == Direction.Right) ? gridCellLonSize : -gridCellLonSize;
-                    squareDistances[1] = latLongSquareDistance(lat1, lon1, (lat1 + (lat2 - lat1) * (gridLon - lon1) / (lon2 - lon1)), gridLon);
+                    squareDistances[1] = squareDistance(lat1, lon1, (lat1 + (lat2 - lat1) * (gridLon - lon1) / (lon2 - lon1)), gridLon);
 
                     currentGeohash = singleMoveGeohash(currentGeohash, precision, move.lon);
                     geohashMap[currentGeohash] = true;
@@ -359,14 +407,130 @@ contract GeohashConverter {
         return bbox;
     }
 
-    // Main function to process the polygon and return all encompassing geohashes
-    // obs: latitudes and longitudes should be given in degrees and with the DECIMALS_FACTOR already applied
-    function processPolygon(int256[] memory latitudes, int256[] memory longitudes, uint8 precision) external returns (bytes32[] memory) {
+    // Function to fill the interior of the polygon
+    // it will consider that the edges are already rasterized in the map geohashesMap
+    // This function utilizes the labelsToGeohash map. Remember to reset before use.
+    // obs: x and y are already scaled by DECIMALS_FACTOR
+    function fillPolygon(int256[] memory latitudes, int256[] memory longitudes, uint8 precision, BoundingBox memory bbox) internal {
         require(latitudes.length == longitudes.length, "Latitude and longitude arrays must have the same length");
         require(latitudes.length >= 3, "Polygon must have at least 3 vertices");
         require(precision <= geohashMaxPrecision, "Precision must be less than or equal to the maximum precision");
 
-        bytes32[] memory comprehensiveGeohashes;
+        // Inicialização de variáveis auxiliares
+        uint256 i;
+        uint256 j;
+        uint256 count;
+
+        int256 lat;
+        int256 lon;
+
+        bytes32 auxGeohash;
+        bytes32 currentGeohash;
+
+        Move memory move;
+        
+        // Segmentação inicial baseada em labels (preenchimento já deve ter sido feito aqui)
+
+        // 1o loop para segmentar os labels. OBS: aqui, estamos aumentando a borda em 1, virtualmente, em cada direção, para facilitar a segmentação e eliminar mais rapidamente areas externas
+        count = 0;  // sera usado como label atual
+        for (i = 0; i < bbox.height + 2; i++) {
+            if (i == 0) {
+                // borda superior
+                // preencher inteiramente com label = 0
+
+                continue;
+            } else if (i == bbox.height + 1) {
+                // borda inferior
+
+            }
+
+            //etc
+
+            for (j = 0; j < bbox.width + 2; j++) {
+                if (j == 0) {
+                    // borda esquerda
+                    // preencher com label = 0
+                    
+                    continue;
+                }
+
+                //etc
+            }
+        }
+        
+        // 2o loop para identificar os labels equivalentes (basicamente simplificar o equivalencyList)
+        for (i = 0; i < labelEquivalencyList.length; i++) {
+            j = i;
+            while (j != labelEquivalencyList[j]) {
+                j = labelEquivalencyList[j];
+            }
+            labelEquivalencyList[i] = j;
+        }
+
+        // 3o loop para identificar os geohashes internos a partir dos labels candidatos
+        for (i = 0; i < labelToGeohashes.length; i++) {
+            // Verificar se o i-esimo label representa uma regiao interna. 
+            // Podemos eliminar os labels que são equivalentes a 0, pois garantimos que estes são externos
+            if (labelEquivalencyList[i] != 0) {
+                continue;
+            }
+
+            // Assim, sobram apenas os labels que poderiam representar regiões internas
+            // Se algum ponto do label for interno, marcar como true todos os geohashes referentes a este label
+            // obs: aqui, é garantido que qualquer ponto deste geohash não está no traçado do poligono, pois o traçado ja foi rasterizado
+            lat, lon = geohashToLatLong(labelToGeohashes[i][0], precision);
+
+            // logica da semirreta e ccontar quantas vezes ha interseccao entre os edges e esta semirreta
+            // se for impar, marcar como true todos os geohashes referentes a este label
+            // se for par, entao este label nao representa uma regiao interna e podemos ir para o proximo label
+            j = 0;
+            count = 0;
+            for (j = 0; j < latitudes.length; j++) {    // we are considering the first point included and the second point excluded
+                uint idx = (j + 1) % latitudes.length;
+                uint lat1 = latitudes[j];
+                uint lon1 = longitudes[j];
+                uint lat2 = latitudes[idx];
+                uint lon2 = longitudes[idx];6
+                move = Move({   // From 1 to 2
+                    lat: (lat2 > lat1) ? Direction.Up : Direction.Down,
+                    lon: (lon2 > lon1) ? Direction.Right : Direction.Left
+                });
+
+                // Handle with horizontal edges case. Remember it is impossible to be inside the edge itself, so we can skip it.
+                if (lat1 == lat2) {
+                    continue;
+                }
+
+
+
+
+
+                // 1a condicao - se a lat for fora dos limites do edge, podemos descartar a possibilidade de interseccao da semirreta com ele.
+                if (lat > (move.lat == Direction.Up ? lat2 : lat1) || lat < (move.lat == Direction.Up ? lat1 : lat2)) {
+                    continue;
+                }                
+            }
+
+
+            for (j = 0; j < labelToGeohashes[i].length; j++) {
+                currentGeohash = labelToGeohashes[i][j];
+                // Verificar se o label representa uma regiao interna
+                // Se for interno, marcar como true no geohashMap
+
+
+            }
+        }
+
+        // Resetar o labelToGeohash e olabelEquivalencyList antes de sair da funcao.
+    }
+
+
+    // Main function to process the polygon and return all encompassing geohashes
+    // obs: latitudes and longitudes should be given in degrees and with the DECIMALS_FACTOR already applied
+    function processPolygon(int256[] memory latitudes, int256[] memory longitudes, uint8 precision) external returns (bytes32[] memory comprehensiveGeohashes) {
+        require(latitudes.length == longitudes.length, "Latitude and longitude arrays must have the same length");
+        require(latitudes.length >= 3, "Polygon must have at least 3 vertices");
+        require(precision <= geohashMaxPrecision, "Precision must be less than or equal to the maximum precision");
 
         /* BOUNDING BOX */
         // Determine the bounding box of the polygon to use in the fill algorithm
@@ -377,13 +541,15 @@ contract GeohashConverter {
         // Rasterize all edges of the polygon to find edge geohashes
         uint256 numEdges = latitudes.length;
         for (uint i = 0; i < numEdges; i++) {
-            uint latIdx = (i + 1) % numEdges;
-            rasterizeEdge(latitudes[i], longitudes[i], latitudes[latIdx], longitudes[latIdx], precision);
+            uint idx = (i + 1) % numEdges;
+            rasterizeEdge(latitudes[i], longitudes[i], latitudes[idx], longitudes[idx], precision);
         }
 
         // Fill the polygon, identifying all internal geohashes
+        fillPolygon(latitudes, longitudes, precision, bbox);
+
         // Combine edge and internal geohashes, ensuring uniqueness (it is already combined since in both functions we are using the same map to store the geohashes)
-        // Return the comprehensive list of geohashes and reset the geohashMap for the geohash-square used (defined by the bounding box)
+        // Reset the geohashMap for the geohash-square used (defined by the bounding box)
 
         return comprehensiveGeohashes;
     }
