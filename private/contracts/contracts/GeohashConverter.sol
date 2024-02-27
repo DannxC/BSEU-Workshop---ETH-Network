@@ -442,13 +442,15 @@ contract GeohashConverter {
         // Handle with Vertexes possible cases of intersection with the ray
         for (i = 0; i < numEdges; i++) {
             if (p.lat == latitudes[i] && p.lon < longitudes[i]) {
-                // Verify if the first non-horizontal leftIndex-edge is up or down
+
+                // Verify if the first leftIndex-edge is horizontal edge (or possibly a point). If it is, we don't consider it as an intersection and continue.
                 idx = (i + numEdges - 1) % numEdges;
                 idx2 = (idx + 1) % numEdges;
-                while (latitudes[idx] == latitudes[idx2]) {
-                    idx = (idx + numEdges - 1) % numEdges;      // decrementa um indice
-                    idx2 = (idx + 1) % numEdges;      // incrementa um indice a partir de idx
+                if (latitudes[idx] == latitudes[idx2]) {
+                    continue;
                 }
+
+                // Here, we guarantee that the first left-index edge is not horizontal. Now we can verify if it is up or down
                 move.lat = (latitudes[idx] < latitudes[idx2]) ? Direction.Up : Direction.Down;
 
                 // Now let's verify if the first non-horizontal rightIndex-edge is up or down
@@ -499,8 +501,8 @@ contract GeohashConverter {
 
                     // region II - triangle region
                     if (((move.lat == Direction.Up && move.lon == Direction.Right) || (move.lat == Direction.Down && move.lon == Direction.Left) ) ?
-                            (p.lat - p1.lat) * (p2.lon - p1.lon) > (p2.lat - p1.lat) * (p.lon - p1.lon) : // 2o and 3o quadrants
-                            (p.lat - p1.lat) * (p2.lon - p1.lon) < (p2.lat - p1.lat) * (p.lon - p1.lon)   // 1o and 4o quadrants
+                            (p.lat - p1.lat) > (p2.lat - p1.lat) * (p.lon - p1.lon) / (p2.lon - p1.lon): // 2o and 3o quadrants
+                            (p.lat - p1.lat) < (p2.lat - p1.lat) * (p.lon - p1.lon) / (p2.lon - p1.lon)  // 1o and 4o quadrants
                         ) {
                         count++;
                         continue;
