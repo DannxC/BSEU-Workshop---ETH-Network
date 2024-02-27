@@ -412,6 +412,115 @@ contract GeohashConverter {
         return bbox;
     }
 
+    // Function to check if a given geohash is inside a polygon (here we consider that the edges are already rasterized in the map geohashesMap)
+    // obs: it takes the middle point of the geohash to check if it is inside the polygon. As we guarantee that the edges are already rasterized, we can use this approach
+    // to think that this point will NEVER be in the edge of the polygon itself.
+    function isInternGeohash(int256[] memory latitudes, int256[] memory longitudes, bytes32 _geohash, uint8 precision) private view returns (bool isInside) {
+        require(latitudes.length == longitudes.length, "Latitude and longitude arrays must have the same length");
+        require(latitudes.length >= 3, "Polygon must have at least 3 vertices");
+
+        uint256 i;
+        uint256 j;
+        uint256 count;
+        uint256 idx;
+        uint256 idx2;
+        uint256 numEdges = latitudes.length;
+
+        Point memory p;
+        Point memory p1;
+        Point memory p2;
+
+        Move memory move;
+
+        // obs: aqui, é garantido que qualquer ponto deste geohash não está no traçado do poligono, pois o traçado ja foi rasterizado
+        (p.lat, p.lon) = geohashToLatLong(_geohash, precision); // ponto médio do geohash (convenção)
+
+        // logica da semirreta e ccontar quantas vezes ha interseccao entre os edges e esta semirreta
+        // se for impar, marcar como true todos os geohashes referentes a este label
+        // se for par, entao este label nao representa uma regiao interna e podemos ir para o proximo label
+        count = 0;
+        // Handle with Vertexes possible cases of intersection with the ray
+        for (i = 0; i < numEdges; i++) {
+            if (p.lat == latitudes[i] && p.lon < longitudes[i]) {
+                // Verify if the first non-horizontal leftIndex-edge is up or down
+                idx = (i + numEdges - 1) % numEdges;
+                idx2 = (idx + 1) % numEdges;
+                while (latitudes[idx] == latitudes[idx2]) {
+                    idx = (idx + numEdges - 1) % numEdges;      // decrementa um indice
+                    idx2 = (idx + 1) % numEdges;      // incrementa um indice a partir de idx
+                }
+                move.lat = (latitudes[idx] < latitudes[idx2]) ? Direction.Up : Direction.Down;
+
+                // Now let's verify if the first non-horizontal rightIndex-edge is up or down
+                idx = i;
+                idx2 = (idx + 1) % numEdges;
+                while (latitudes[idx] == latitudes[idx2]) {
+                    idx = (idx + 1) % numEdges;      // incrementa um indice
+                    idx2 = (idx + 1) % numEdges;      // incrementa um indice a partir de idx
+                }
+                // Now, if the lat direction is different from the previous one, we have an intersection. If it is the same, we don't have an intersection, it is just a peak vertex.
+                if (move.lat != ((latitudes[idx] < latitudes[idx2]) ? Direction.Up : Direction.Down)) {
+                    count++;
+                }
+            }
+        }
+
+        // Handle with Edges as open-intervals (excluding vertexes)
+        for (i = 0; i < numEdges; i++) {
+            idx = (i + 1) % numEdges;
+            p1.lat = latitudes[i];
+            p1.lon = longitudes[i];
+            p2.lat = latitudes[idx];
+            p2.lon = longitudes[idx];
+
+            // Handle with horizontal edges case. Remember it is impossible to be inside the edge itself, so we can skip it.
+            if (p1.lat == p2.lat) {
+                continue;
+            }
+
+            move = Move({   // From 1 to 2
+                lat: (p2.lat > p1.lat) ? Direction.Up : Direction.Down,
+                lon: (p2.lon > p1.lon) ? Direction.Right : Direction.Left
+            });
+
+            // Conditions to check if the ray intersects the edge. If it does, increment the count.
+            if ((move.lat == Direction.Up) ? (p1.lat < p.lat && p.lat < p2.lat) : (p2.lat < p.lat && p.lat < p1.lat)) {       // Include only cases where the ray are in the limits of the edge (latitudes)
+                if (p1.lon == p2.lon) {     // Handle with vertical edges case.
+                    if (p.lon < p1.lon) {
+                        count++;
+                        continue;
+                    }
+                } else {    // Diagonal edges case
+                    // region I - rectangle region
+                    if ((move.lon == Direction.Right) ? (p.lon < p1.lon) : (p.lon < p2.lon)) {
+                        count++;
+                        continue;
+                    } 
+
+                    // region II - triangle region
+                    if (((move.lat == Direction.Up && move.lon == Direction.Right) || (move.lat == Direction.Down && move.lon == Direction.Left) ) ?
+                            (p.lat - p1.lat) * (p2.lon - p1.lon) > (p2.lat - p1.lat) * (p.lon - p1.lon) : // 2o and 3o quadrants
+                            (p.lat - p1.lat) * (p2.lon - p1.lon) < (p2.lat - p1.lat) * (p.lon - p1.lon)   // 1o and 4o quadrants
+                        ) {
+                        count++;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Verificar se o i-esimo label realmente é ou não uma regiao interna
+        // Se for interno, marcar como true no geohashMap todos os geohashes referentes a este label
+        // Se count é par, então este label não representa uma região interna e podemos ir para o próximo label
+        if (count % 2 == 1) {
+            isInside = true;
+        } else {
+            isInside = false;
+        }
+
+        return isInside;
+    }
+
     // Function to fill the interior of the polygon
     // it will consider that the edges are already rasterized in the map geohashesMap
     // This function utilizes the labelsToGeohash map. Remember to reset before use.
@@ -424,20 +533,15 @@ contract GeohashConverter {
         // Inicialização de variáveis auxiliares
         uint256 i;
         uint256 j;
-        uint256 count;
-
-        int256 lat;
-        int256 lon;
+        uint256 label;
 
         bytes32 auxGeohash;
         bytes32 currentGeohash;
-
-        Move memory move;
         
         // Segmentação inicial baseada em labels (preenchimento já deve ter sido feito aqui)
 
         // 1o loop para segmentar os labels. OBS: aqui, estamos aumentando a borda em 1, virtualmente, em cada direção, para facilitar a segmentação e eliminar mais rapidamente areas externas
-        count = 0;  // sera usado como label atual
+        label = 0;  // sera usado como label atual
         for (i = 0; i < bbox.height + 2; i++) {
             if (i == 0) {
                 // borda superior
@@ -473,103 +577,20 @@ contract GeohashConverter {
         }
 
         // 3o loop para identificar os geohashes internos a partir dos labels candidatos
-        for (i = 0; i < labelToGeohashes.length; i++) {
+        for (i = 0; i < labelEquivalencyList.length; i++) {
             // Verificar se o i-esimo label representa uma regiao interna. 
             // Podemos eliminar os labels que são equivalentes a 0, pois garantimos que estes são externos
-            if (labelEquivalencyList[i] != 0) {
+            if (labelEquivalencyList[i] == 0) {
                 continue;
             }
 
-            // Assim, sobram apenas os labels que poderiam representar regiões internas
-            // Se algum ponto do label for interno, marcar como true todos os geohashes referentes a este label
-            // obs: aqui, é garantido que qualquer ponto deste geohash não está no traçado do poligono, pois o traçado ja foi rasterizado
-            lat, lon = geohashToLatLong(labelToGeohashes[i][0], precision);
-
-            // logica da semirreta e ccontar quantas vezes ha interseccao entre os edges e esta semirreta
-            // se for impar, marcar como true todos os geohashes referentes a este label
-            // se for par, entao este label nao representa uma regiao interna e podemos ir para o proximo label
-            j = 0;
-            count = 0;
-            uint idx;
-
-            // Handle with Vertexes possible cases of intersection with the ray
-            for (j = 0; j < latitudes.length; j++) {
-                if (lat == latitudes[j] && lon < longitudes[j]) {
-                    // Verify if the first non-horizontal leftIndex-edge is up or down
-                    idx = (j + latitudes.length - 1) % latitudes.length;
-                    while (latitudes[idx] == latitudes[(idx + 1) % latitudes.length]) {
-                        idx = (idx + latitudes.length - 1) % latitudes.length;      // decrementa um indice
-                    }
-                    move = Move({
-                        lat: (latitudes[idx] < latitudes[(idx + 1) % latitudes.length]) ? Direction.Up : Direction.Down,
-                        lon: Direction.Left // Doesn't matter in this case... could be anything
-                    });
-
-                    // Now let's verify if the first non-horizontal rightIndex-edge is up or down
-                    idx = j;
-                    while (latitudes[idx] == latitudes[(idx + 1) % latitudes.length]) {
-                        idx = (idx + 1) % latitudes.length;      // incrementa um indice
-                    }
-                    // Now, if the lat direction is different from the previous one, we have an intersection. If it is the same, we don't have an intersection, it is just a peak vertex.
-                    if (move.lat != ((latitudes[idx] < latitudes[(idx + 1) % latitudes.length]) ? Direction.Up : Direction.Down)) {
-                        count++;
-                    }
+            // Aqui, temos os possíveis candidatos a regiões internas. Vamos verificar se são realmente internos
+            if (isInternGeohash(latitudes, longitudes, labelToGeohashes[i][0], precision)) {                
+                // Aqui, o label é uma região interna. Marcar como true todos os geohashes referentes a este label
+                for (j = 0; j < labelToGeohashes[i].length; j++) {
+                    currentGeohash = labelToGeohashes[i][j];
+                    geohashMap[currentGeohash] = true;
                 }
-            }
-
-            // Handle with Edges as open-intervals (excluding vertexes)
-            for (j = 0; j < latitudes.length; j++) {
-                idx = (j + 1) % latitudes.length;
-                Point memory p1 = Point({lat: latitudes[j], lon: longitudes[j]});
-                Point memory p2 = Point({lat: latitudes[idx], lon: longitudes[idx]});
-
-                // Handle with horizontal edges case. Remember it is impossible to be inside the edge itself, so we can skip it.
-                if (p1.lat == p2.lat) {
-                    continue;
-                }
-
-                move = Move({   // From 1 to 2
-                    lat: (p2.lat > p1.lat) ? Direction.Up : Direction.Down,
-                    lon: (p2.lon > p1.lon) ? Direction.Right : Direction.Left
-                });
-
-                // Conditions to check if the ray intersects the edge. If it does, increment the count.
-                if ((move.lat == Direction.Up) ? (p1.lat < lat && lat < p2.lat) : (p2.lat < lat && lat < p1.lat)) {       // Include only cases where the ray are in the limits of the edge (latitudes)
-                    if (p1.lon == p2.lon) {     // Handle with vertical edges case.
-                        if (lon < p1.lon) {
-                            count++;
-                            continue;
-                        }
-                    } else {    // Diagonal edges case
-                        // region I - rectangle region
-                        if ((move.lon == Direction.Right) ? (lon < p1.lon) : (lon < p2.lon)) {
-                            count++;
-                            continue;
-                        } 
-
-                        // region II - triangle region
-                        if (((move.lat == Direction.Up && move.lon == Direction.Right) || (move.lat == Direction.Down && move.lon == Direction.Left) ) ?
-                                (lat - p1.lat) * (p2.lon - p1.lon) > (p2.lat - p1.lat) * (lon - p1.lon) : // 2o and 3o quadrants
-                                (lat - p1.lat) * (p2.lon - p1.lon) < (p2.lat - p1.lat) * (lon - p1.lon)   // 1o and 4o quadrants
-                            ) {
-                            count++;
-                            continue;
-                        }
-                    }
-                }
-            }
-
-            // Verificar se o i-esimo label realmente é ou não uma regiao interna
-            // Se for interno, marcar como true no geohashMap todos os geohashes referentes a este label
-            // Se count é par, então este label não representa uma região interna e podemos ir para o próximo label
-            if (count % 2 == 0) {
-                continue;
-            }
-
-            // Aqui, o label é uma região interna. Marcar como true todos os geohashes referentes a este label
-            for (j = 0; j < labelToGeohashes[i].length; j++) {
-                currentGeohash = labelToGeohashes[i][j];
-                geohashMap[currentGeohash] = true;
             }
         }
 
