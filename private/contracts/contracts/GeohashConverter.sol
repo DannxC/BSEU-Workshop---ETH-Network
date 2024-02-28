@@ -56,7 +56,7 @@ contract GeohashConverter {
     // Estrutura para mapear labels a geohashes
     mapping(uint256 => bytes32[]) public labelToGeohashes;
     // Equivalency List to be used in the fillPolygon function
-    uint256[] public labelEquivalencyList;
+        uint256[] public labelEquivalencyList;
     
 
     /* FUNCTIONS */
@@ -412,6 +412,59 @@ contract GeohashConverter {
         return bbox;
     }
 
+    // Function to maintain the equivalencyList updated and simplified (to be used in the fillPolygon function)
+    // By simplifying the list, we can reduce the number of iterations in the fillPolygon function... also, it guarantee that all equivalent labels are updated and the equivalences are already propagated when inserted/updated.
+    function upsertEquivalence(uint256 label, uint256 equivalentTo) internal {
+        // label should exist. If not, should be 1 index greater than the last label
+        require(label <= labelEquivalencyList.length, "Label does not exist or is not in the correct order");
+        require(equivalentTo <= labelEquivalencyList.length, "EquivalentTo does not exist or is not in the correct order");
+
+        uint i;
+
+        // Caso que devemos adicionar um novo label (push)
+        if (label == labelEquivalencyList.length) {
+            labelEquivalencyList.push(label);       // o newLabel aponta para ele mesmo
+            return;
+        }
+
+        // Caso em que devemos atualizar ou propagar uma equivalencia
+        if (equivalentTo == label) {
+            return;
+        }
+
+        // Como o estado do labelEquivalencyList é sempre simplificada, garantimos que todos os labels já estão apontando para um label "terminal" (temporariamente terminal seria o mais correto
+        // Verificar se label e/ou equivalentTo é terminal temporario
+        if ((labelEquivalencyList[label] == label) && (labelEquivalencyList[equivalentTo] == equivalentTo)) {   // Caso 1 - label e equivalentTo sao terminais temporarios
+            // Atualizar todos os labels que apontam para label (inclui ele mesmo) para equivalentTo
+            for (i = 0; i < labelEquivalencyList.length; i++) {
+                if (labelEquivalencyList[i] == label) {
+                    labelEquivalencyList[i] = equivalentTo;
+                }
+            }
+        } else if ((labelEquivalencyList[label] == label) && (labelEquivalencyList[equivalentTo] != equivalentTo)) {    // Caso 2 - label é terminal temporario e equivalentTo não
+            // Atualizar todos os labels que apontam para label (inclui ele mesmo) para onde o equivalentTo aponta
+            for (i = 0; i < labelEquivalencyList.length; i++) {
+                if (labelEquivalencyList[i] == label) {
+                    labelEquivalencyList[i] = labelEquivalencyList[equivalentTo];
+                }
+            }
+        } else if ((labelEquivalencyList[label] != label) && (labelEquivalencyList[equivalentTo] == equivalentTo)) {    // Caso 3 - label não é terminal temporario e equivalentTo é
+            // Atualizar todos os labels que apontam para o equivalentTo (inclui ele mesmo) para onde o label aponta
+            for (i = 0; i < labelEquivalencyList.length; i++) {
+                if (labelEquivalencyList[i] == equivalentTo) {
+                    labelEquivalencyList[i] = labelEquivalencyList[label];
+                }
+            }
+        } else {    // Caso 4 - label e equivalentTo não são terminais temporarios
+            // Atualizar todos os labels que apontam para label para equivalentTo
+            for (i = 0; i < labelEquivalencyList.length; i++) {
+                if (labelEquivalencyList[i] == labelEquivalencyList[label]) {
+                    labelEquivalencyList[i] = labelEquivalencyList[equivalentTo];
+                }
+            }
+        }
+    }
+
     // Function to check if a given geohash is inside a polygon (here we consider that the edges are already rasterized in the map geohashesMap)
     // obs: it takes the middle point of the geohash to check if it is inside the polygon. As we guarantee that the edges are already rasterized, we can use this approach
     // to think that this point will NEVER be in the edge of the polygon itself.
@@ -537,6 +590,12 @@ contract GeohashConverter {
         uint256 j;
         uint256 label;
 
+        uint256[][] memory labelMap;  // matriz de labels
+
+        bool currentColor;
+        bool leftColor;
+        bool upColor;
+
         bytes32 auxGeohash;
         bytes32 currentGeohash;
         
@@ -544,41 +603,87 @@ contract GeohashConverter {
 
         // 1o loop para segmentar os labels. OBS: aqui, estamos aumentando a borda em 1, virtualmente, em cada direção, para facilitar a segmentação e eliminar mais rapidamente areas externas
         label = 0;  // sera usado como label atual
+        labelEquivalencyList.push(label);  // idx 0 -> value 0 ; adiciona o label atual na lista de equivalencia (o Zero inicialmente é equivalente a ele mesmo)
+        labelMap = new uint256[][](bbox.height + 2);  // Inicializa a matriz de labels (aumenta a borda em 1, virtualmente, para cima e para baixo)
+        
+        // Percorremos de cima para baixo em cada largura
         for (i = 0; i < bbox.height + 2; i++) {
-            if (i == 0) {
-                // borda superior
-                // preencher inteiramente com label = 0
-
-                continue;
-            } else if (i == bbox.height + 1) {
-                // borda inferior
-
+            // Att auxGeohash
+            if (i == 1) {
+                auxGeohash = bbox.geohashes[0];
+            } else if (2 <= i && i <= bbox.height) {
+                auxGeohash = singleMoveGeohash(auxGeohash, precision, Direction.Down);  // desce uma linha
             }
 
-            //etc
+            // Inicializa a linha da matriz de labels (aumenta a borda em 1, virtualmente, para esquerda e para direita)
+            labelMap[i] = new uint256[](bbox.width + 2);
 
+            // Percorremos da esquerda para a direita em cada altura
             for (j = 0; j < bbox.width + 2; j++) {
-                if (j == 0) {
-                    // borda esquerda
-                    // preencher com label = 0
-                    
+                // Primeira linha / coluna virtuais
+                if (i == 0 || j == 0) {
+                    labelMap[i][j] = 0;
                     continue;
                 }
 
-                //etc
+                // Att currentGeohash
+                if (j == 1) {
+                    currentGeohash = auxGeohash;
+                } else if (2 <= j && j <= bbox.width) {
+                    currentGeohash = singleMoveGeohash(currentGeohash, precision, Direction.Right);
+                }
+                
+                // Att currentColor, leftColor and upColor ... aplicar lógica de borda real + meio da matriz
+                // currentColor
+                if (1 <= i && i <= bbox.height && 1 <= j && j <= bbox.width) {
+                    currentColor = geohashMap[currentGeohash];
+                } else if (i == bbox.height + 1 || j == bbox.width + 1) {       // bordas virtuais
+                    currentColor = false;
+                }
+                // leftColor
+                if (i == bbox.height + 1 || j == 1) {
+                    leftColor = false;
+                } else if (j == bbox.width + 1) {
+                    leftColor = geohashMap[currentGeohash];
+                } else {
+                    leftColor = geohashMap[singleMoveGeohash(currentGeohash, precision, Direction.Left)];
+                }
+                // upColor
+                if (i == 1 || j == bbox.width + 1) {
+                    upColor = false;
+                } else if (i == bbox.height + 1) {
+                    upColor = geohashMap[currentGeohash];
+                } else {
+                    upColor = geohashMap[singleMoveGeohash(currentGeohash, precision, Direction.Up)];
+                }
+
+                // Lógica de segmentação
+                if (currentColor == leftColor && currentColor != upColor) {
+                    labelMap[i][j] = labelMap[i][j - 1];
+                } else if (currentColor != leftColor && currentColor == upColor) {
+                    labelMap[i][j] = labelMap[i - 1][j];
+                } else if (currentColor == leftColor && currentColor == upColor) {
+                    // Copy left label
+                    labelMap[i][j] = labelMap[i][j - 1];
+                    // Store equivalency with up label
+                    upsertEquivalence(labelMap[i - 1][j], labelMap[i][j - 1]);
+                } else {
+                    // Create new label
+                    label++;
+                    labelMap[i][j] = label;
+                    upsertEquivalence(label, label);    // New labels are allways equivalent to themselves
+                }
+
+                // Adiciona o currentGeohash ao mapa labelToGeohashes baseado no label atual
+                // Apenas se o tile estiver nos limites "reais" do bounding box
+                if (1 <= i && i <= bbox.height && 1 <= j && j <= bbox.width) {
+                    labelToGeohashes[labelMap[i][j]].push(currentGeohash);
+                }
+
             }
-        }
-        
-        // 2o loop para identificar os labels equivalentes (basicamente simplificar o equivalencyList)
-        for (i = 0; i < labelEquivalencyList.length; i++) {
-            j = i;
-            while (j != labelEquivalencyList[j]) {
-                j = labelEquivalencyList[j];
-            }
-            labelEquivalencyList[i] = j;
         }
 
-        // 3o loop para identificar os geohashes internos a partir dos labels candidatos
+        // 2o loop para identificar os geohashes internos a partir dos labels candidatos
         for (i = 0; i < labelEquivalencyList.length; i++) {
             // Verificar se o i-esimo label representa uma regiao interna. 
             // Podemos eliminar os labels que são equivalentes a 0, pois garantimos que estes são externos
@@ -597,6 +702,8 @@ contract GeohashConverter {
         }
 
         // Resetar o labelToGeohash e olabelEquivalencyList antes de sair da funcao.
+        delete labelToGeohashes;
+        delete labelEquivalencyList;
     }
 
 
