@@ -52,6 +52,7 @@ contract GeohashConverter {
 
     //mapping(uint8 => int256) public geohashPrecisionMap; // Example: This allows for dynamic precision
     mapping(bytes32 => bool) public geohashMap; // Map to store unique geohashes from the polygon processing algorithm result
+    bytes32[] public comprehensiveGeohashes; // Array to store all unique geohashes from the polygon processing algorithm result
 
     // Estrutura para mapear labels a geohashes
     mapping(uint256 => bytes32[]) public labelToGeohashes;
@@ -257,6 +258,14 @@ contract GeohashConverter {
     function abs(int x) private pure returns (int) {
         return x >= 0 ? x : -x;
     }
+
+    // function to set a geohash true in the geohashMap
+    function setGeohashTrue(bytes32 _geohash) public {
+        if (!geohashMap[_geohash]) {
+            geohashMap[_geohash] = true;
+            comprehensiveGeohashes.push(_geohash);  // Save this geohash in the comprehensiveGeohashes array
+        }
+    }
   
     // Function to rasterize the edge of the polygon using the DDA algorithm
     // obs: x and y are already scaled by DECIMALS_FACTOR
@@ -267,31 +276,35 @@ contract GeohashConverter {
         require(lat2 >= MIN_LATITUDE && lat2 <= MAX_LATITUDE, "lat2 out of valid limits.");
         
         bytes32 currentGeohash;
+
         Move memory move;
 
         // Handle point case
         if (lon1 == lon2 && lat1 == lat2) {
             currentGeohash = latLongToZOrderGeohash(lat1, lon1, precision);
             geohashMap[currentGeohash] = true;
+            setGeohashTrue(currentGeohash);
 
         } else if (lon1 == lon2) {         // handle vertical edges
             move.lat = (lat2 > lat1) ? Direction.Up : Direction.Down;
 
             currentGeohash = latLongToZOrderGeohash(lat1, lon1, precision);
-            geohashMap[currentGeohash] = true;
+            setGeohashTrue(currentGeohash);
+
             while (currentGeohash != latLongToZOrderGeohash(lat2, lon2, precision)) {
                 currentGeohash = singleMoveGeohash(currentGeohash, precision, move.lat);
-                geohashMap[currentGeohash] = true;
+                setGeohashTrue(currentGeohash);
             }
 
         } else if (lat1 == lat2) {         // handle horizontal edges
             move.lon = (lon2 > lon1) ? Direction.Right : Direction.Left;
 
             currentGeohash = latLongToZOrderGeohash(lat1, lon1, precision);
-            geohashMap[currentGeohash] = true;
+            setGeohashTrue(currentGeohash);
+
             while (currentGeohash != latLongToZOrderGeohash(lat2, lon2, precision)) {
                 currentGeohash = singleMoveGeohash(currentGeohash, precision, move.lon);
-                geohashMap[currentGeohash] = true;
+                setGeohashTrue(currentGeohash);
             }
 
         } else {        // handle diagonal cases
@@ -325,7 +338,7 @@ contract GeohashConverter {
 
             // First segment geohash
             currentGeohash = latLongToZOrderGeohash((lat1 + gridLat) / 2, (lon1 + gridLon) / 2, precision);
-            geohashMap[currentGeohash] = true;
+            setGeohashTrue(currentGeohash);
 
             // Algorithm loop
             while (squareDistances[0] < squareDistances[2] || squareDistances[1] < squareDistances[2]) {        // guarantee that there is still one of the directions "inside" the segment
@@ -338,35 +351,34 @@ contract GeohashConverter {
 
                     // Move in the diagonal and mark all quadrants
                     currentGeohash = singleMoveGeohash(currentGeohash, precision, move.lat);
-                    geohashMap[currentGeohash] = true;
+                    setGeohashTrue(currentGeohash);
                     currentGeohash = singleMoveGeohash(currentGeohash, precision, move.lon);
-                    geohashMap[currentGeohash] = true;
+                    setGeohashTrue(currentGeohash);
 
                     // mark the 4th quadrant as well
-                    if (move.lat == Direction.Up) geohashMap[singleMoveGeohash(currentGeohash, precision, Direction.Down)] = true;
-                    else geohashMap[singleMoveGeohash(currentGeohash, precision, Direction.Up)] = true;
+                    if (move.lat == Direction.Up) setGeohashTrue(singleMoveGeohash(currentGeohash, precision, Direction.Down));
+                    else setGeohashTrue(singleMoveGeohash(currentGeohash, precision, Direction.Up));
                 }
                 else if (squareDistances[0] < squareDistances[1]) {    // Move in the latitude direction
                     gridLat += (move.lat == Direction.Up) ? gridCellLatSize : -gridCellLatSize;
                     squareDistances[0] = squareDistance(lat1, lon1, gridLat, (lon1 + (lon2 - lon1) * (gridLat - lat1) / (lat2 - lat1)));
 
                     currentGeohash = singleMoveGeohash(currentGeohash, precision, move.lat);
-                    geohashMap[currentGeohash] = true;
+                    setGeohashTrue(currentGeohash);
 
                 } else if (squareDistances[0] > squareDistances[1]) {   // Move in the longitude direction
                     gridLon += (move.lon == Direction.Right) ? gridCellLonSize : -gridCellLonSize;
                     squareDistances[1] = squareDistance(lat1, lon1, (lat1 + (lat2 - lat1) * (gridLon - lon1) / (lon2 - lon1)), gridLon);
 
                     currentGeohash = singleMoveGeohash(currentGeohash, precision, move.lon);
-                    geohashMap[currentGeohash] = true;
-
+                    setGeohashTrue(currentGeohash);
                 }
             }
 
 
-            // Include manually the extreme points (notice it doesn't matter if DDA already included them, because the function "geohashMap" will handle the uniqueness of the geohashes)
-            geohashMap[latLongToZOrderGeohash(lat1, lon1, precision)] = true;
-            geohashMap[latLongToZOrderGeohash(lat2, lon2, precision)] = true;
+            // Include manually the extreme points if they wasn't included yet
+            setGeohashTrue(latLongToZOrderGeohash(lat1, lon1, precision));
+            setGeohashTrue(latLongToZOrderGeohash(lat2, lon2, precision));
         }
     }
 
@@ -473,7 +485,6 @@ contract GeohashConverter {
         require(latitudes.length >= 3, "Polygon must have at least 3 vertices");
 
         uint256 i;
-        uint256 j;
         uint256 count;
         uint256 idx;
         uint256 idx2;
@@ -580,7 +591,7 @@ contract GeohashConverter {
     // it will consider that the edges are already rasterized in the map geohashesMap
     // This function utilizes the labelsToGeohash map. Remember to reset before use.
     // obs: x and y are already scaled by DECIMALS_FACTOR
-    function fillPolygon(int256[] memory latitudes, int256[] memory longitudes, uint8 precision, BoundingBox memory bbox) internal {
+    function fillPolygon(int256[] memory latitudes, int256[] memory longitudes, uint8 precision, BoundingBox memory bbox) public {
         require(latitudes.length == longitudes.length, "Latitude and longitude arrays must have the same length");
         require(latitudes.length >= 3, "Polygon must have at least 3 vertices");
         require(precision <= geohashMaxPrecision, "Precision must be less than or equal to the maximum precision");
@@ -605,12 +616,12 @@ contract GeohashConverter {
         label = 0;  // sera usado como label atual
         labelEquivalencyList.push(label);  // idx 0 -> value 0 ; adiciona o label atual na lista de equivalencia (o Zero inicialmente é equivalente a ele mesmo)
         labelMap = new uint256[][](bbox.height + 2);  // Inicializa a matriz de labels (aumenta a borda em 1, virtualmente, para cima e para baixo)
-        
+
         // Percorremos de cima para baixo em cada largura
         for (i = 0; i < bbox.height + 2; i++) {
             // Att auxGeohash
             if (i == 1) {
-                auxGeohash = bbox.geohashes[0];
+                auxGeohash = bbox.geohashes[1];
             } else if (2 <= i && i <= bbox.height) {
                 auxGeohash = singleMoveGeohash(auxGeohash, precision, Direction.Down);  // desce uma linha
             }
@@ -696,23 +707,31 @@ contract GeohashConverter {
                 // Aqui, o label é uma região interna. Marcar como true todos os geohashes referentes a este label
                 for (j = 0; j < labelToGeohashes[i].length; j++) {
                     currentGeohash = labelToGeohashes[i][j];
-                    geohashMap[currentGeohash] = true;
+                    setGeohashTrue(currentGeohash);
                 }
             }
         }
 
-        // Resetar o labelToGeohash e olabelEquivalencyList antes de sair da funcao.
-        delete labelToGeohashes;
-        delete labelEquivalencyList;
+        // Resetar o labelToGeohash e o labelEquivalencyList antes de sair da funcao.
+        for (i = 0; i < labelEquivalencyList.length; i++) { // resetar o mapping labelToGeohashes
+            labelToGeohashes[i] = new bytes32[](0);    // resetar o array associado ao i-esimo label
+        }
+        labelEquivalencyList = new uint256[](0);    // resetar o array de equivalencias
     }
 
 
     // Main function to process the polygon and return all encompassing geohashes
     // obs: latitudes and longitudes should be given in degrees and with the DECIMALS_FACTOR already applied
-    function processPolygon(int256[] memory latitudes, int256[] memory longitudes, uint8 precision) external returns (bytes32[] memory comprehensiveGeohashes) {
+    function processPolygon(int256[] memory latitudes, int256[] memory longitudes, uint8 precision) external returns (bytes32[] memory result) {
         require(latitudes.length == longitudes.length, "Latitude and longitude arrays must have the same length");
         require(latitudes.length >= 3, "Polygon must have at least 3 vertices");
         require(precision <= geohashMaxPrecision, "Precision must be less than or equal to the maximum precision");
+        
+        uint256 i;
+        uint256 idx;
+        uint256 numEdges = latitudes.length;
+
+        bytes32 currentGeohash;
 
         /* BOUNDING BOX */
         // Determine the bounding box of the polygon to use in the fill algorithm
@@ -721,18 +740,30 @@ contract GeohashConverter {
 
         /* RASTERIZE EDGES */
         // Rasterize all edges of the polygon to find edge geohashes
-        uint256 numEdges = latitudes.length;
-        for (uint i = 0; i < numEdges; i++) {
-            uint idx = (i + 1) % numEdges;
+        for (i = 0; i < numEdges; i++) {
+            idx = (i + 1) % numEdges;
             rasterizeEdge(latitudes[i], longitudes[i], latitudes[idx], longitudes[idx], precision);
         }
 
-        // Fill the polygon, identifying all internal geohashes
+        /* RASTERZE INTERNAL AREAS */
+        // Fill the polygon, identifying all internal geohashes. It will consider that the edges are already rasterized in the map geohashesMap
         fillPolygon(latitudes, longitudes, precision, bbox);
 
-        // Combine edge and internal geohashes, ensuring uniqueness (it is already combined since in both functions we are using the same map to store the geohashes)
-        // Reset the geohashMap for the geohash-square used (defined by the bounding box)
+        // initialize result array with correct length and copy the elements from comprehensiveGeohashes array
+        result = new bytes32[](comprehensiveGeohashes.length);
+        for (i = 0; i < comprehensiveGeohashes.length; i++) {
+            result[i] = comprehensiveGeohashes[i];
+        }
 
-        return comprehensiveGeohashes;
+        // Reset the geohashMap... all geohashes set as true should be set as false
+        for (i = 0; i < comprehensiveGeohashes.length; i++) {
+            currentGeohash = comprehensiveGeohashes[i];
+            geohashMap[currentGeohash] = false;
+        }
+
+        // Reset the comprehensiveGeohashes array
+        comprehensiveGeohashes = new bytes32[](0);
+
+        return result;
     }
 }
